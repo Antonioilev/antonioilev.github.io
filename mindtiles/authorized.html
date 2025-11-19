@@ -37,7 +37,6 @@
       const copyBtn = document.getElementById('copyBtn');
 
       function getFragmentToken() {
-        // URL вида ...#access_token=...&expires_in=...
         const hash = window.location.hash || '';
         if (!hash) return null;
         const params = new URLSearchParams(hash.replace(/^#/, ''));
@@ -62,7 +61,6 @@
       rawTokenEl.textContent = token;
       tokenBox.style.display = 'block';
 
-      // Попытка верифицировать токен через Edge Function
       try {
         showOK('Проверяем токен на сервере...');
         const resp = await fetch(VERIFY_URL, {
@@ -71,25 +69,22 @@
             'Authorization': 'Bearer ' + token,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ token }) // body не обязателен, auth header достаточен
+          body: JSON.stringify({ token })
         });
 
         const data = await resp.json().catch(()=>null);
         if (!resp.ok || !data || data.ok !== true) {
-          // Если верификация не прошла — показываем ошибку и даём manual copy/deeplink
           showError('Верификация токена не удалась. Сервер вернул ошибку.');
           actionsEl.innerHTML = `
             <div>Ответ сервера: <pre style="white-space:pre-wrap">${JSON.stringify(data)}</pre></div>
             <button id="openDl">Открыть deeplink вручную</button>
           `;
           document.getElementById('openDl').onclick = () => {
-            // open deeplink even if server verification failed
             location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
           };
           return;
         }
 
-        // Успех верификации — открываем deeplink, но даём fallback кнопку
         showOK('Токен валиден. Открываем приложение...');
         actionsEl.innerHTML = `
           <div>Пользователь: <strong>${(data.user && (data.user.email || data.user.id)) || 'unknown'}</strong></div>
@@ -98,9 +93,7 @@
         `;
         const openDlBtn = document.getElementById('openDl');
         openDlBtn.onclick = () => {
-          // Пытаемся навигацией открыть deeplink
           location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          // Также ставим короткую задержку и показываем инструкцию
           setTimeout(()=> {
             document.getElementById('fallback').style.display = 'inline-block';
           }, 1200);
@@ -114,7 +107,6 @@
         actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
       }
 
-      // copy button
       copyBtn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(rawTokenEl.textContent);
@@ -125,6 +117,64 @@
         }
       });
 
+    })();
+
+    (async function() {
+      const SYNC_ENDPOINT = 'https://your-api.example.com/api/sync-profile'; // <-- замените
+      const USE_REST = true;
+
+      function parseHash(hash) {
+        if (!hash) return {};
+        const clean = hash.startsWith('#') ? hash.slice(1) : hash;
+        return clean.split('&').reduce((acc, pair) => {
+          const [k, v] = pair.split('=');
+          if (!k) return acc;
+          acc[decodeURIComponent(k)] = decodeURIComponent(v || '');
+          return acc;
+        }, {});
+      }
+      const params = parseHash(location.hash);
+      const access_token = params['access_token'];
+      if (!access_token) {
+        document.body.innerText = 'No access token found in redirect.';
+        return;
+      }
+      try {
+        window.location.href = `mygame://auth#access_token=${encodeURIComponent(access_token)}`;
+      } catch (e) {
+        console.warn('Custom scheme open failed (caught):', e);
+      }
+      await new Promise(r => setTimeout(r, 300));
+
+      async function syncProfileWeb(token) {
+        try {
+          const resp = await fetch(SYNC_ENDPOINT, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ action: 'sync_profile', source: 'web_redirect' })
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            console.error('Sync failed', resp.status, text);
+            document.body.innerText = `Sync failed: ${resp.status}`;
+            return;
+          }
+          const data = await resp.json();
+          console.log('Sync success', data);
+          document.body.innerText = 'Token accepted, profile synchronized. Продолжаем...';
+        } catch (err) {
+          console.error('Sync error', err);
+          document.body.innerText = 'Ошибка при синхронизации профиля (см. консоль).';
+        }
+      }
+
+      if (window.location.hash && window.location.hash.includes('access_token')) {
+        await syncProfileWeb(access_token);
+        history.replaceState(null, '', location.pathname + location.search);
+      }
     })();
   </script>
 </body>
