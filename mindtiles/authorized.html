@@ -22,15 +22,58 @@
       display: block;
     }
   </style>
+  <!-- Подключаем Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.0.0/dist/umd/supabase.min.js"></script>
   <script>
-    // Получаем фрагмент из URL
-    var fragment = window.location.hash.substr(1);  // Убираем "#"
+    // Инициализация Supabase клиента
+    const supabaseUrl = 'https://jkogvwoghymvypwzzcco.supabase.co';
+    const supabaseKey = 'your-anon-or-service-role-key';  // Замените на ваш ключ
+    const supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
-    // Преобразуем фрагмент в query параметры
-    var redirectUrl = "mindtiles://auth?" + fragment;
+    // Функция для извлечения параметров из URL
+    function getUrlParams() {
+      const params = {};
+      const queryString = window.location.hash.substring(1); // Убираем #
+      const urlParams = new URLSearchParams(queryString);
 
-    // Перенаправляем в приложение
-    window.location = redirectUrl;
+      urlParams.forEach((value, key) => {
+        params[key] = value;
+      });
+      return params;
+    }
+
+    // Проверяем, есть ли фрагмент в URL
+    var fragment = window.location.hash.substr(1);  // Получаем фрагмент
+    var debugElement = document.getElementById("debug");
+
+    // Если фрагмент пустой, сообщаем об этом
+    if (!fragment) {
+      debugElement.textContent = "Fragment is empty. No tokens received.";
+      debugElement.style.display = "block";
+    } else {
+      // Преобразуем фрагмент в query параметры
+      const params = getUrlParams();
+      const accessToken = params.access_token;
+
+      if (accessToken) {
+        // Если access_token найден, передаем его в мобильное приложение
+        const redirectUrl = "mindtiles://auth?access_token=" + accessToken;
+        window.location = redirectUrl;
+      } else {
+        // Если токен не найден в фрагменте, пробуем восстановить сессию через Supabase
+        supabase.auth.getSessionFromUrl({ storeSession: true }).then(({ data, error }) => {
+          if (data && data.session) {
+            // Если сессия восстановлена, передаем access_token в приложение
+            const redirectUrl = "mindtiles://auth?access_token=" + data.session.access_token;
+            window.location = redirectUrl;
+          } else {
+            // Если сессия не восстановлена, выводим ошибку
+            debugElement.textContent = "Failed to restore session. Please check your setup.";
+            debugElement.style.display = "block";
+          }
+        });
+      }
+    }
   </script>
 </head>
 <body>
