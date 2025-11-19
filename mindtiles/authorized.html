@@ -1,84 +1,100 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8" />
   <title>Authorized</title>
   <style>
-    body {
-      background-color: #2A4B42; /* Цвет фона страницы */
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh; /* Высота экрана */
-      margin: 0;
-    }
-    .content {
-      text-align: center;
-    }
-    img {
-      max-width: 100%;
-      height: auto;
-      display: block;
-    }
+    body { font-family: Arial, sans-serif; padding: 16px; }
+    pre { background:#f0f0f0; padding:8px; }
+    #debug{white-space:pre-wrap;}
   </style>
-  <!-- Подключаем Supabase JS -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.0.0/dist/umd/supabase.min.js"></script>
-  <script>
-    // Инициализация Supabase клиента
-    const supabaseUrl = 'https://jkogvwoghymvypwzzcco.supabase.co';
-    const supabaseKey = 'your-anon-key';  // Используйте только anon key (публикуемый)
-    const supabase = supabase.createClient(supabaseUrl, supabaseKey);
-
-    const debugEl = document.getElementById('debug');
-    
-    // Функция для отладки
-    function dbg(txt, obj) {
-      debugEl.style.display = 'block';
-      debugEl.textContent += txt + (obj ? ('\n' + JSON.stringify(obj, null, 2)) : '') + '\n\n';
-      console.log(txt, obj || '');
-    }
-
-    const hash = window.location.hash ? window.location.hash.substring(1) : '';
-    dbg('Initial hash:', hash || '(empty)');
-
-    // Парсим hash в параметры
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get('access_token');
-    const refreshToken = params.get('refresh_token');
-
-    if (accessToken) {
-      dbg('Found access_token in fragment, redirecting to app');
-      window.location.href = `mindtiles://auth?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken || '')}`;
-    } else {
-      dbg('No access_token in fragment — trying to restore session via Supabase JS');
-      // Метод getSessionFromUrl может вернуть session если Supabase выставил cookie/session
-      (async () => {
-        try {
-          // Небольшая пауза для стабильности
-          await new Promise(r => setTimeout(r, 50));
-          const res = await supabase.auth.getSessionFromUrl({ storeSession: false });
-          dbg('getSessionFromUrl result:', res);
-          const session = res?.data?.session || res?.session || null;
-          if (session && session.access_token) {
-            dbg('Session recovered, redirecting to app');
-            window.location.href = `mindtiles://auth?access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token || '')}`;
-          } else {
-            dbg('No session recovered. The verify flow may not return tokens. Consider using magic link or server exchange.');
-          }
-        } catch (err) {
-          dbg('Error while restoring session:', err);
-        }
-      })();
-    }
-  </script>
 </head>
 <body>
-  <div class="content">
-    <img src="MT_Authorised.png" alt="Authorized Image" />
-  </div>
-  <!-- Этот элемент для отладки, если нужно -->
-  <pre id="debug" style="display:none;"></pre>
-  <small id="sentStatus" style="display:none;"></small>
+  <h2>Authorization result</h2>
+  <div id="debug" style="display:block;"></div>
+  <div id="actions"></div>
+
+<script>
+  const debugEl = document.getElementById('debug');
+  function dbg(title, obj) {
+    console.log(title, obj);
+    debugEl.textContent += title + ' ' + (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)) + '\\n';
+  }
+
+  function parseFragment() {
+    const hash = window.location.hash ? window.location.hash.substring(1) : '';
+    dbg('Full fragment:', hash);
+    const params = new URLSearchParams(hash);
+    const out = {};
+    for (const [k, v] of params.entries()) out[k] = v;
+    return out;
+  }
+
+  (async function main(){
+    const params = parseFragment();
+
+    if (params.error) {
+      dbg('Auth error', params);
+      const actions = document.getElementById('actions');
+      actions.innerHTML = '<p style="color:#a00">Link error: ' + (params.error_description || params.error) + '</p><button id="resend">Request new email</button>';
+      document.getElementById('resend').onclick = () => {
+        alert('Implement resend flow in your app or via Supabase admin.');
+      };
+      return;
+    }
+
+    if (!params.access_token) {
+      dbg('No access_token found in fragment.');
+      return;
+    }
+
+    // Show partial token for debug
+    dbg('Access token (start):', params.access_token.slice(0, 30) + '...');
+
+    // Try automatic POST to local Unity server
+    const localUrl = 'http://localhost:8765/receive_token';
+    const payload = {
+      access_token: params.access_token,
+      refresh_token: params.refresh_token || null,
+      expires_at: params.expires_at || null,
+      type: params.type || null
+    };
+
+    dbg('Attempting to POST token to local Unity endpoint: ' + localUrl);
+    try {
+      const resp = await fetch(localUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (resp.ok) {
+        dbg('Successfully delivered token to Unity local endpoint.');
+        document.getElementById('actions').innerHTML = '<p>Token sent to Unity (localhost).</p>';
+      } else {
+        dbg('Local endpoint responded with status: ' + resp.status);
+        document.getElementById('actions').innerHTML = '<p>Local endpoint responded: ' + resp.status + '</p>';
+        // show manual copy button
+        showManual();
+      }
+    } catch (e) {
+      dbg('Failed to POST to local endpoint (likely not running):', String(e));
+      showManual();
+    }
+
+    function showManual() {
+      const actions = document.getElementById('actions');
+      actions.innerHTML = '<p>Automatic delivery failed. Copy token manually:</p>' +
+        '<textarea id="tok" rows="6" cols="80">' + params.access_token + '</textarea><br/>' +
+        '<button id="copy">Copy token</button>';
+      document.getElementById('copy').onclick = () => {
+        const ta = document.getElementById('tok');
+        ta.select();
+        document.execCommand('copy');
+        alert('Token copied to clipboard');
+      };
+    }
+
+  })();
+</script>
 </body>
 </html>
