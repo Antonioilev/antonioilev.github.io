@@ -27,52 +27,49 @@
   <script>
     // Инициализация Supabase клиента
     const supabaseUrl = 'https://jkogvwoghymvypwzzcco.supabase.co';
-    const supabaseKey = 'your-anon-or-service-role-key';  // Замените на ваш ключ
+    const supabaseKey = 'your-anon-key';  // Используйте только anon key (публикуемый)
     const supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
-    // Функция для извлечения параметров из URL
-    function getUrlParams() {
-      const params = {};
-      const queryString = window.location.hash.substring(1); // Убираем #
-      const urlParams = new URLSearchParams(queryString);
-
-      urlParams.forEach((value, key) => {
-        params[key] = value;
-      });
-      return params;
+    const debugEl = document.getElementById('debug');
+    
+    // Функция для отладки
+    function dbg(txt, obj) {
+      debugEl.style.display = 'block';
+      debugEl.textContent += txt + (obj ? ('\n' + JSON.stringify(obj, null, 2)) : '') + '\n\n';
+      console.log(txt, obj || '');
     }
 
-    // Проверяем, есть ли фрагмент в URL
-    var fragment = window.location.hash.substr(1);  // Получаем фрагмент
-    var debugElement = document.getElementById("debug");
+    const hash = window.location.hash ? window.location.hash.substring(1) : '';
+    dbg('Initial hash:', hash || '(empty)');
 
-    // Если фрагмент пустой, сообщаем об этом
-    if (!fragment) {
-      debugElement.textContent = "Fragment is empty. No tokens received.";
-      debugElement.style.display = "block";
+    // Парсим hash в параметры
+    const params = new URLSearchParams(hash);
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+
+    if (accessToken) {
+      dbg('Found access_token in fragment, redirecting to app');
+      window.location.href = `mindtiles://auth?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken || '')}`;
     } else {
-      // Преобразуем фрагмент в query параметры
-      const params = getUrlParams();
-      const accessToken = params.access_token;
-
-      if (accessToken) {
-        // Если access_token найден, передаем его в мобильное приложение
-        const redirectUrl = "mindtiles://auth?access_token=" + accessToken;
-        window.location = redirectUrl;
-      } else {
-        // Если токен не найден в фрагменте, пробуем восстановить сессию через Supabase
-        supabase.auth.getSessionFromUrl({ storeSession: true }).then(({ data, error }) => {
-          if (data && data.session) {
-            // Если сессия восстановлена, передаем access_token в приложение
-            const redirectUrl = "mindtiles://auth?access_token=" + data.session.access_token;
-            window.location = redirectUrl;
+      dbg('No access_token in fragment — trying to restore session via Supabase JS');
+      // Метод getSessionFromUrl может вернуть session если Supabase выставил cookie/session
+      (async () => {
+        try {
+          // Небольшая пауза для стабильности
+          await new Promise(r => setTimeout(r, 50));
+          const res = await supabase.auth.getSessionFromUrl({ storeSession: false });
+          dbg('getSessionFromUrl result:', res);
+          const session = res?.data?.session || res?.session || null;
+          if (session && session.access_token) {
+            dbg('Session recovered, redirecting to app');
+            window.location.href = `mindtiles://auth?access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token || '')}`;
           } else {
-            // Если сессия не восстановлена, выводим ошибку
-            debugElement.textContent = "Failed to restore session. Please check your setup.";
-            debugElement.style.display = "block";
+            dbg('No session recovered. The verify flow may not return tokens. Consider using magic link or server exchange.');
           }
-        });
-      }
+        } catch (err) {
+          dbg('Error while restoring session:', err);
+        }
+      })();
     }
   </script>
 </head>
