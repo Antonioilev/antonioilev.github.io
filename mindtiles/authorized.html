@@ -28,19 +28,13 @@
   <script>
     // If token present in query (?access_token=...), move it to the fragment (#access_token=...)
     (function normalizeTokenLocation() {
-      const search = window.location.search;
-      if (search && search.includes('access_token=')) {
-        const params = new URLSearchParams(window.location.search);
-        const token = params.get('access_token');
-        const refresh = params.get('refresh_token');
-        const expires = params.get('expires_in');
-        // Build hash from query params
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('access_token') || params.has('id_token')) {
         const parts = [];
-        if (token) parts.push(`access_token=${encodeURIComponent(token)}`);
-        if (refresh) parts.push(`refresh_token=${encodeURIComponent(refresh)}`);
-        if (expires) parts.push(`expires_in=${encodeURIComponent(expires)}`);
+        if (params.has('access_token')) parts.push('access_token=' + params.get('access_token'));
+        if (params.has('refresh_token')) parts.push('refresh_token=' + params.get('refresh_token'));
+        if (params.has('expires_in')) parts.push('expires_in=' + params.get('expires_in'));
         const newHash = parts.join('&');
-        // Update URL without reloading (so token appears in address bar as hash)
         const newUrl = window.location.origin + window.location.pathname + (newHash ? ('#' + newHash) : '');
         history.replaceState(null, '', newUrl);
       }
@@ -107,6 +101,8 @@
         });
 
         const data = await resp.json().catch(() => null);
+        console.log('verify resp status', resp.status, 'body', data);
+
         if (!resp.ok || !data || data.ok !== true) {
           // Если верификация не прошла — показываем ошибку и даём manual copy/deeplink
           showError('Верификация токена не удалась. Сервер вернул ошибку.');
