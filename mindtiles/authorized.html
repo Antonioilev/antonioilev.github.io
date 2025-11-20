@@ -26,113 +26,135 @@
   </div>
 
   <script>
-    (async function(){
-      const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token'; // <-- замените если нужно
-      const DEEPLINK_SCHEME = 'mygame://auth'; // <-- замените на вашу схему, например mindtiles://auth
-
-      const statusEl = document.getElementById('status');
-      const actionsEl = document.getElementById('actions');
-      const tokenBox = document.getElementById('tokenBox');
-      const rawTokenEl = document.getElementById('rawToken');
-      const copyBtn = document.getElementById('copyBtn');
-
-      function getFragmentToken() {
-        const hash = window.location.hash || '';
-        if (!hash) return null;
-        const params = new URLSearchParams(hash.replace(/^#/, ''));
-        return params.get('access_token') || null;
+    // If token present in query (?access_token=...), move it to the fragment (#access_token=...)
+    (function normalizeTokenLocation() {
+      const search = window.location.search;
+      if (search && search.includes('access_token=')) {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('access_token');
+        const refresh = params.get('refresh_token');
+        const expires = params.get('expires_in');
+        // Build hash from query params
+        const parts = [];
+        if (token) parts.push(`access_token=${encodeURIComponent(token)}`);
+        if (refresh) parts.push(`refresh_token=${encodeURIComponent(refresh)}`);
+        if (expires) parts.push(`expires_in=${encodeURIComponent(expires)}`);
+        const newHash = parts.join('&');
+        // Update URL without reloading (so token appears in address bar as hash)
+        const newUrl = window.location.origin + window.location.pathname + (newHash ? ('#' + newHash) : '');
+        history.replaceState(null, '', newUrl);
       }
+    })();
 
-      function getQueryToken() {
-        const search = window.location.search || '';
-        if (!search) return null;
-        const params = new URLSearchParams(search.replace(/^\?/, ''));
-        return params.get('access_token') || null;
-      }
+    const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token'; // <-- замените если нужно
+    const DEEPLINK_SCHEME = 'mygame://auth'; // <-- замените на вашу схему, например mindtiles://auth
 
-      function showError(msg) {
-        statusEl.innerHTML = '<span class="err">Ошибка: ' + msg + '</span>';
-      }
+    const statusEl = document.getElementById('status');
+    const actionsEl = document.getElementById('actions');
+    const tokenBox = document.getElementById('tokenBox');
+    const rawTokenEl = document.getElementById('rawToken');
+    const copyBtn = document.getElementById('copyBtn');
 
-      function showOK(msg) {
-        statusEl.innerHTML = '<span class="ok">' + msg + '</span>';
-      }
+    function getFragmentToken() {
+      const hash = window.location.hash || '';
+      if (!hash) return null;
+      const params = new URLSearchParams(hash.replace(/^#/, ''));
+      return params.get('access_token') || null;
+    }
 
-      // Пытаемся получить токен сначала из хэша, затем из query
-      let token = getFragmentToken() || getQueryToken();
-      if (!token) {
-        showError('Токен не найден в URL. Убедитесь, что вы попали на эту страницу после авторизации.');
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
+    function getQueryToken() {
+      const search = window.location.search || '';
+      if (!search) return null;
+      const params = new URLSearchParams(search.replace(/^\?/, ''));
+      return params.get('access_token') || null;
+    }
+
+    function showError(msg) {
+      statusEl.innerHTML = '<span class="err">Ошибка: ' + msg + '</span>';
+    }
+
+    function showOK(msg) {
+      statusEl.innerHTML = '<span class="ok">' + msg + '</span>';
+    }
+
+    // Пытаемся получить токен сначала из хэша, затем из query
+    let token = getFragmentToken() || getQueryToken();
+    if (!token) {
+      showError('Токен не найден в URL. Убедитесь, что вы попали на эту страницу после авторизации.');
+      actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
+      return;
+    }
+
+    rawTokenEl.textContent = token;
+    tokenBox.style.display = 'block';
+
+    // Попытка верифицировать токен через Edge Function
+    try {
+      showOK('Проверяем токен на сервере...');
+      const resp = await fetch(VERIFY_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ token }) // body не обязателен, auth header достаточен
+      });
+
+      const data = await resp.json().catch(()=>null);
+      if (!resp.ok || !data || data.ok !== true) {
+        // Если верификация не прошла — показываем ошибку и даём manual copy/deeplink
+        showError('Верификация токена не удалась. Сервер вернул ошибку.');
+        actionsEl.innerHTML = `
+          <div>Ответ сервера: <pre style="white-space:pre-wrap">${JSON.stringify(data)}</pre></div>
+          <button id="openDl">Открыть deeplink вручную</button>
+        `;
+        document.getElementById('openDl').onclick = () => {
+          // open deeplink even if server verification failed
+          location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
+          // Keep token visible in address bar after deeplink
+          history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
+        };
         return;
       }
 
-      rawTokenEl.textContent = token;
-      tokenBox.style.display = 'block';
+      // Успех верификации — открываем deeplink, но даём fallback кнопку
+      showOK('Токен валиден. Открываем приложение...');
+      actionsEl.innerHTML = `
+        <div>Пользователь: <strong>${(data.user && (data.user.email || data.user.id)) || 'unknown'}</strong></div>
+        <button id="openDl">Открыть приложение</button>
+        <button id="fallback">Если не открылось — показать токен</button>
+      `;
+      const openDlBtn = document.getElementById('openDl');
+      openDlBtn.onclick = () => {
+        // Пытаемся навигацией открыть deeplink
+        location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
+        // Keep token visible in address bar after deeplink
+        history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
+        // Также ставим короткую задержку и показываем инструкцию
+        setTimeout(()=> {
+          document.getElementById('fallback').style.display = 'inline-block';
+        }, 1200);
+      };
+      document.getElementById('fallback').onclick = () => {
+        tokenBox.style.display = 'block';
+      };
 
-      // Попытка верифицировать токен через Edge Function
+    } catch (e) {
+      showError('Ошибка при вызове verify-token: ' + e.message);
+      actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
+    }
+
+    // copy button
+    copyBtn.addEventListener('click', async () => {
       try {
-        showOK('Проверяем токен на сервере...');
-        const resp = await fetch(VERIFY_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ token }) // body не обязателен, auth header достаточен
-        });
-
-        const data = await resp.json().catch(()=>null);
-        if (!resp.ok || !data || data.ok !== true) {
-          // Если верификация не прошла — показываем ошибку и даём manual copy/deeplink
-          showError('Верификация токена не удалась. Сервер вернул ошибку.');
-          actionsEl.innerHTML = `
-            <div>Ответ сервера: <pre style="white-space:pre-wrap">${JSON.stringify(data)}</pre></div>
-            <button id="openDl">Открыть deeplink вручную</button>
-          `;
-          document.getElementById('openDl').onclick = () => {
-            // open deeplink even if server verification failed
-            location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          };
-          return;
-        }
-
-        // Успех верификации — открываем deeplink, но даём fallback кнопку
-        showOK('Токен валиден. Открываем приложение...');
-        actionsEl.innerHTML = `
-          <div>Пользователь: <strong>${(data.user && (data.user.email || data.user.id)) || 'unknown'}</strong></div>
-          <button id="openDl">Открыть приложение</button>
-          <button id="fallback">Если не открылось — показать токен</button>
-        `;
-        const openDlBtn = document.getElementById('openDl');
-        openDlBtn.onclick = () => {
-          // Пытаемся навигацией открыть deeplink
-          location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          // Также ставим короткую задержку и показываем инструкцию
-          setTimeout(()=> {
-            document.getElementById('fallback').style.display = 'inline-block';
-          }, 1200);
-        };
-        document.getElementById('fallback').onclick = () => {
-          tokenBox.style.display = 'block';
-        };
-
-      } catch (e) {
-        showError('Ошибка при вызове verify-token: ' + e.message);
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
+        await navigator.clipboard.writeText(rawTokenEl.textContent);
+        copyBtn.textContent = 'Скопировано';
+        setTimeout(()=> copyBtn.textContent = 'Скопировать в буфер', 1500);
+      } catch(err) {
+        copyBtn.textContent = 'Копирование не поддерживается';
       }
+    });
 
-      // copy button
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(rawTokenEl.textContent);
-          copyBtn.textContent = 'Скопировано';
-          setTimeout(()=> copyBtn.textContent = 'Скопировать в буфер', 1500);
-        } catch(err) {
-          copyBtn.textContent = 'Копирование не поддерживается';
-        }
-      });
-
-    })();
   </script>
 </body>
 </html>
