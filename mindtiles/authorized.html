@@ -44,7 +44,7 @@
 
     (async function() {
       // Для тестирования подставьте сюда URL вашей debug-функции (verify-token-debug) или prod verify
-      const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token-debug'; // <- ОБНОВИТЕ при необходимости
+      const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token'; // <- ОБНОВИТЕ при необходимости
       const DEEPLINK_SCHEME = 'mygame://auth'; // <-- замените на вашу схему
 
       const statusEl = document.getElementById('status');
@@ -133,6 +133,10 @@
             history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
           };
           document.getElementById('showToken').onclick = () => { tokenBox.style.display = 'block'; };
+
+          // Обновление кнопки
+          const btn = document.querySelector('button');
+          btn.textContent = 'Logged in';  // Меняем текст на "Logged in"
 
           return;
         }
