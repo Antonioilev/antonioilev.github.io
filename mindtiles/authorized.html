@@ -23,6 +23,9 @@
       <pre id="rawToken" style="white-space:normal; word-break:break-all"></pre>
       <button id="copyBtn">Скопировать в буфер</button>
     </div>
+    <div id="resendBox" style="margin-top:12px; display:none;">
+      <button id="resendBtn">Повторно отправить письмо для подтверждения</button>
+    </div>
   </div>
 
   <script>
@@ -49,6 +52,8 @@
       const tokenBox = document.getElementById('tokenBox');
       const rawTokenEl = document.getElementById('rawToken');
       const copyBtn = document.getElementById('copyBtn');
+      const resendBox = document.getElementById('resendBox');
+      const resendBtn = document.getElementById('resendBtn');
 
       // Функция для поиска токена в хэше или query
       function getToken() {
@@ -116,6 +121,14 @@
             // Keep token visible in address bar after deeplink
             history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
           };
+          
+          // Показываем кнопку для повторной отправки письма
+          resendBox.style.display = 'block';
+          resendBtn.onclick = () => {
+            // Ваш код для повторной отправки письма
+            showError('Повторная отправка письма...');
+          };
+          
           return;
         }
 
