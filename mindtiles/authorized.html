@@ -1,181 +1,123 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Authorized — MindTiles</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; color:#111 }
-    .ok { color: green; }
-    .err { color: red; }
-    .card { border:1px solid #ddd; padding:16px; border-radius:8px; max-width:720px; margin:auto }
-    button { padding:8px 12px; margin-top:12px; }
-    pre { background:#f7f7f7; padding:8px; overflow:auto }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Авторизация</h2>
-    <div id="status">Обработка токена...</div>
-    <div id="actions" style="margin-top:12px;"></div>
-    <div id="tokenBox" style="margin-top:12px; display:none;">
-      <label>Токен (скопируйте вручную если нужно):</label>
-      <pre id="rawToken" style="white-space:normal; word-break:break-all"></pre>
-      <button id="copyBtn">Скопировать в буфер</button>
-    </div>
-  </div>
 
-  <script>
-    (async function(){
-      const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token'; // <-- замените если нужно
-      const DEEPLINK_SCHEME = 'mygame://auth'; // <-- замените на вашу схему, например mindtiles://auth
-
-      const statusEl = document.getElementById('status');
-      const actionsEl = document.getElementById('actions');
-      const tokenBox = document.getElementById('tokenBox');
-      const rawTokenEl = document.getElementById('rawToken');
-      const copyBtn = document.getElementById('copyBtn');
-
-      function getFragmentToken() {
-        const hash = window.location.hash || '';
-        if (!hash) return null;
-        const params = new URLSearchParams(hash.replace(/^#/, ''));
-        return params.get('access_token') || null;
+import { createClient } from 'npm:@supabase/supabase-js@2';
+Deno.serve(async (req)=>{
+  if (req.method === 'OPTIONS') return new Response(null, {
+    status: 204
+  });
+  // Read env with sensible fallbacks (use the actual names you configured)
+  const SUPABASE_URL = Deno.env.get('URL') ?? Deno.env.get('SUPABASE_URL') ?? '';
+  const ANON_KEY = Deno.env.get('ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  if (!SUPABASE_URL || !ANON_KEY) {
+    return new Response(JSON.stringify({
+      error: 'Missing env keys'
+    }), {
+      status: 500
+    });
+  }
+  // Try to get userId from body (preferred) or querystring as fallback
+  let userId = null;
+  try {
+    if (req.headers.get('content-type')?.includes('application/json')) {
+      const body = await req.json().catch(()=>null);
+      if (body && typeof body.userId === 'string') userId = body.userId;
+    }
+  } catch (e) {
+  // ignore
+  }
+  // fallback: parse from URL query
+  if (!userId) {
+    try {
+      const reqUrl = typeof req.url === 'string' ? req.url : '';
+      const parsed = new URL(reqUrl, SUPABASE_URL) // base ensures relative URLs parse
+      ;
+      userId = parsed.searchParams.get('userId');
+    } catch (e) {
+    // ignore parsing error
+    }
+  }
+  if (!userId) return new Response(JSON.stringify({
+    error: 'userId required'
+  }), {
+    status: 400
+  });
+  // Auth header and token
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return new Response(JSON.stringify({
+    error: 'Authorization token required'
+  }), {
+    status: 401
+  });
+  // Create anon client with Authorization header to act as the user
+  const anonClient = createClient(SUPABASE_URL, ANON_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`
       }
-
-      function showError(msg) {
-        statusEl.innerHTML = '<span class="err">Ошибка: ' + msg + '</span>';
+    }
+  });
+  // Validate token and get user
+  const { data: userData, error: userError } = await anonClient.auth.getUser();
+  if (userError || !userData?.user) return new Response(JSON.stringify({
+    error: 'Invalid token'
+  }), {
+    status: 401
+  });
+  const requesterUid = userData.user.id;
+  if (requesterUid !== userId) return new Response(JSON.stringify({
+    error: 'Forbidden'
+  }), {
+    status: 403
+  });
+  const confirmed = !!userData.user.email_confirmed_at;
+  if (!confirmed) {
+    return new Response(JSON.stringify({
+      confirmed: false
+    }), {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      status: 200
+    });
+  }
+  // Try to create profile (RLS must allow authenticated insert where user_id = auth.uid())
+  let profileCreated = false;
+  try {
+    const insertResp = await anonClient.from('profiles').insert([
+      {
+        user_id: requesterUid
       }
-
-      function showOK(msg) {
-        statusEl.innerHTML = '<span class="ok">' + msg + '</span>';
-      }
-
-      const token = getFragmentToken();
-      if (!token) {
-        showError('Токен не найден в URL. Убедитесь, что вы попали на эту страницу после авторизации.');
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
-        return;
-      }
-
-      rawTokenEl.textContent = token;
-      tokenBox.style.display = 'block';
-
-      try {
-        showOK('Проверяем токен на сервере...');
-        const resp = await fetch(VERIFY_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ token })
+    ]).select();
+    if (insertResp.error) {
+      // ignore unique_violation (23505) — profile exists
+      if (insertResp.error.code === '23505') {
+        profileCreated = false;
+      } else {
+        // other errors: return 500
+        return new Response(JSON.stringify({
+          error: insertResp.error.message
+        }), {
+          status: 500
         });
-
-        const data = await resp.json().catch(()=>null);
-        if (!resp.ok || !data || data.ok !== true) {
-          showError('Верификация токена не удалась. Сервер вернул ошибку.');
-          actionsEl.innerHTML = `
-            <div>Ответ сервера: <pre style="white-space:pre-wrap">${JSON.stringify(data)}</pre></div>
-            <button id="openDl">Открыть deeplink вручную</button>
-          `;
-          document.getElementById('openDl').onclick = () => {
-            location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          };
-          return;
-        }
-
-        showOK('Токен валиден. Открываем приложение...');
-        actionsEl.innerHTML = `
-          <div>Пользователь: <strong>${(data.user && (data.user.email || data.user.id)) || 'unknown'}</strong></div>
-          <button id="openDl">Открыть приложение</button>
-          <button id="fallback">Если не открылось — показать токен</button>
-        `;
-        const openDlBtn = document.getElementById('openDl');
-        openDlBtn.onclick = () => {
-          location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          setTimeout(()=> {
-            document.getElementById('fallback').style.display = 'inline-block';
-          }, 1200);
-        };
-        document.getElementById('fallback').onclick = () => {
-          tokenBox.style.display = 'block';
-        };
-
-      } catch (e) {
-        showError('Ошибка при вызове verify-token: ' + e.message);
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
       }
-
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(rawTokenEl.textContent);
-          copyBtn.textContent = 'Скопировано';
-          setTimeout(()=> copyBtn.textContent = 'Скопировать в буфер', 1500);
-        } catch(err) {
-          copyBtn.textContent = 'Копирование не поддерживается';
-        }
-      });
-
-    })();
-
-    (async function() {
-      const SYNC_ENDPOINT = 'https://your-api.example.com/api/sync-profile'; // <-- замените
-      const USE_REST = true;
-
-      function parseHash(hash) {
-        if (!hash) return {};
-        const clean = hash.startsWith('#') ? hash.slice(1) : hash;
-        return clean.split('&').reduce((acc, pair) => {
-          const [k, v] = pair.split('=');
-          if (!k) return acc;
-          acc[decodeURIComponent(k)] = decodeURIComponent(v || '');
-          return acc;
-        }, {});
-      }
-      const params = parseHash(location.hash);
-      const access_token = params['access_token'];
-      if (!access_token) {
-        document.body.innerText = 'No access token found in redirect.';
-        return;
-      }
-      try {
-        window.location.href = `mygame://auth#access_token=${encodeURIComponent(access_token)}`;
-      } catch (e) {
-        console.warn('Custom scheme open failed (caught):', e);
-      }
-      await new Promise(r => setTimeout(r, 300));
-
-      async function syncProfileWeb(token) {
-        try {
-          const resp = await fetch(SYNC_ENDPOINT, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ action: 'sync_profile', source: 'web_redirect' })
-          });
-          if (!resp.ok) {
-            const text = await resp.text();
-            console.error('Sync failed', resp.status, text);
-            document.body.innerText = `Sync failed: ${resp.status}`;
-            return;
-          }
-          const data = await resp.json();
-          console.log('Sync success', data);
-          document.body.innerText = 'Token accepted, profile synchronized. Продолжаем...';
-        } catch (err) {
-          console.error('Sync error', err);
-          document.body.innerText = 'Ошибка при синхронизации профиля (см. консоль).';
-        }
-      }
-
-      if (window.location.hash && window.location.hash.includes('access_token')) {
-        await syncProfileWeb(access_token);
-        history.replaceState(null, '', location.pathname + location.search);
-      }
-    })();
-  </script>
-</body>
-</html>
+    } else {
+      profileCreated = true;
+    }
+  } catch (e) {
+  // ignore unexpected
+  }
+  return new Response(JSON.stringify({
+    confirmed: true,
+    profileCreated
+  }), {
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    status: 200
+  });
+});
