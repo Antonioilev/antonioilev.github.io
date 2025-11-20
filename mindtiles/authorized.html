@@ -37,10 +37,16 @@
       const copyBtn = document.getElementById('copyBtn');
 
       function getFragmentToken() {
-        // URL вида ...#access_token=...&expires_in=...
         const hash = window.location.hash || '';
         if (!hash) return null;
         const params = new URLSearchParams(hash.replace(/^#/, ''));
+        return params.get('access_token') || null;
+      }
+
+      function getQueryToken() {
+        const search = window.location.search || '';
+        if (!search) return null;
+        const params = new URLSearchParams(search.replace(/^\?/, ''));
         return params.get('access_token') || null;
       }
 
@@ -52,7 +58,8 @@
         statusEl.innerHTML = '<span class="ok">' + msg + '</span>';
       }
 
-      const token = getFragmentToken();
+      // Пытаемся получить токен сначала из хэша, затем из query
+      let token = getFragmentToken() || getQueryToken();
       if (!token) {
         showError('Токен не найден в URL. Убедитесь, что вы попали на эту страницу после авторизации.');
         actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
