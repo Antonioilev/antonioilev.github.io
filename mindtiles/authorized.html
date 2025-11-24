@@ -10,31 +10,39 @@
       padding: 20px;
       color: #111;
       background-color: #2A4B42; /* фон страницы */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      flex-direction: column;
     }
     h2 {
       font-size: 36px;
       font-weight: bold;
       color: #FFD800; /* золотой цвет */
+      text-align: center; /* горизонтальное центрирование */
+      margin: 0 0 20px 0;
     }
     .message {
       font-size: 28px;
       font-weight: bold;
       color: #38B33A; /* зелёный цвет */
-      margin-top: 20px;
+      text-align: center; /* горизонтальное центрирование */
+      margin: 0 0 30px 0;
     }
     .button-container {
       text-align: center;
-      margin-top: 30px;
     }
     button {
-      padding: 16px 32px;
+      padding: 8px 16px; /* уменьшили размеры в 2 раза */
       font-size: 18px;
       background-color: #66A7FF; /* цвет кнопки */
       color: #D2D2D2; /* цвет текста на кнопке */
       border: none;
       border-radius: 8px;
-      width: 230px;
-      height: 165px;
+      width: 115px; /* половина от 230 */
+      height: 82px;  /* половина от 165 */
       cursor: pointer;
     }
     button:hover {
@@ -43,37 +51,43 @@
   </style>
 </head>
 <body>
-  <div class="card">
-    <!-- Заголовок с ключом локализации -->
-    <h2 id="congratulations-header">Congratulations</h2>
+  <!-- Заголовок -->
+  <h2 id="congratulations-header" data-localize="sloc_18">Congratulations!</h2>
 
-    <!-- Текст подтверждения -->
-    <div class="message" id="congratulations-message">You are now logged in!</div>
+  <!-- Сообщение -->
+  <div class="message" id="congratulations-message" data-localize="sloc_19">You are now logged in Mind Tiles.</div>
 
-    <!-- Кнопка для открытия игры -->
-    <div class="button-container">
-      <button id="openGameButton" onclick="openGame()">Play Game</button>
-    </div>
+  <!-- Кнопка Play -->
+  <div class="button-container">
+    <button id="openGameButton" data-localize="Play_Button_Text" onclick="openGame()">Play</button>
   </div>
 
   <script>
-    // Локализация текстов (ключи могут быть изменены на те, что вы используете)
-    const congratulationsHeader = "Congratulations"; // Ключ sloc_18
-    const congratulationsMessage = "You are now logged in!"; // Ключ sloc_19
-    const playButtonText = "Play Game"; // Ключ Play_Button_Text
+    // Объект с локализованными строками (если позже захотите локализацию)
+    const localizedStrings = {
+      sloc_18: "Congratulations!",
+      sloc_19: "You are now logged in Mind Tiles.",
+      Play_Button_Text: "Play"
+    };
 
-    // Устанавливаем локализованные тексты
-    document.getElementById('congratulations-header').textContent = congratulationsHeader;
-    document.getElementById('congratulations-message').textContent = congratulationsMessage;
-    document.getElementById('openGameButton').textContent = playButtonText;
+    function localizePage() {
+      const elements = document.querySelectorAll('[data-localize]');
+      elements.forEach(element => {
+        const key = element.getAttribute('data-localize');
+        if (localizedStrings[key]) {
+          element.textContent = localizedStrings[key];
+        }
+      });
+    }
 
-    // Функция для открытия игры через диплинк
     function openGame() {
-      const DEEPLINK_SCHEME = 'mindtiles://antonioilev.com/auth'; // Замените на вашу схему
+      const DEEPLINK_SCHEME = 'mindtiles://antonioilev.com/auth';
       const token = new URLSearchParams(window.location.hash).get('access_token');
       const url = `${DEEPLINK_SCHEME}#access_token=${encodeURIComponent(token)}`;
-      window.location.href = url; // Открываем приложение через диплинк
+      window.location.href = url;
     }
+
+    localizePage();
   </script>
 </body>
 </html>
