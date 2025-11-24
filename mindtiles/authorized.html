@@ -5,178 +5,75 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Authorized — MindTiles</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; color:#111 }
-    .ok { color: green; }
-    .err { color: red; }
-    .card { border:1px solid #ddd; padding:16px; border-radius:8px; max-width:720px; margin:auto }
-    button { padding:8px 12px; margin-top:12px; }
-    pre { background:#f7f7f7; padding:8px; overflow:auto }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      color: #111;
+      background-color: #2A4B42; /* фон страницы */
+    }
+    h2 {
+      font-size: 36px;
+      font-weight: bold;
+      color: #FFD800; /* золотой цвет */
+    }
+    .message {
+      font-size: 28px;
+      font-weight: bold;
+      color: #38B33A; /* зелёный цвет */
+      margin-top: 20px;
+    }
+    .button-container {
+      text-align: center;
+      margin-top: 30px;
+    }
+    button {
+      padding: 16px 32px;
+      font-size: 18px;
+      background-color: #66A7FF; /* цвет кнопки */
+      color: #D2D2D2; /* цвет текста на кнопке */
+      border: none;
+      border-radius: 8px;
+      width: 230px;
+      height: 165px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #5499cc; /* немного темнее на hover */
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>Авторизация</h2>
-    <div id="status">Обработка токена...</div>
-    <div id="actions" style="margin-top:12px;"></div>
-    <div id="tokenBox" style="margin-top:12px; display:none;">
-      <label>Токен (скопируйте вручную если нужно):</label>
-      <pre id="rawToken" style="white-space:normal; word-break:break-all"></pre>
-      <button id="copyBtn">Скопировать в буфер</button>
-    </div>
-    <div id="resendBox" style="margin-top:12px; display:none;">
-      <button id="resendBtn">Повторно отправить письмо для подтверждения</button>
+    <!-- Заголовок с ключом локализации -->
+    <h2 id="congratulations-header">Congratulations</h2>
+
+    <!-- Текст подтверждения -->
+    <div class="message" id="congratulations-message">You are now logged in!</div>
+
+    <!-- Кнопка для открытия игры -->
+    <div class="button-container">
+      <button id="openGameButton" onclick="openGame()">Play Game</button>
     </div>
   </div>
 
   <script>
-    (function normalizeTokenLocation() {
-      const params = new URLSearchParams(window.location.search);
-      if (params.has('access_token') || params.has('id_token')) {
-        const parts = [];
-        if (params.has('access_token')) parts.push('access_token=' + params.get('access_token'));
-        if (params.has('refresh_token')) parts.push('refresh_token=' + params.get('refresh_token'));
-        if (params.has('expires_in')) parts.push('expires_in=' + params.get('expires_in'));
-        const newHash = parts.join('&');
-        const newUrl = window.location.origin + window.location.pathname + (newHash ? ('#' + newHash) : '');
-        history.replaceState(null, '', newUrl);
-      }
-    })();
+    // Локализация текстов (ключи могут быть изменены на те, что вы используете)
+    const congratulationsHeader = "Congratulations"; // Ключ sloc_18
+    const congratulationsMessage = "You are now logged in!"; // Ключ sloc_19
+    const playButtonText = "Play Game"; // Ключ Play_Button_Text
 
-    (async function() {
-      // Для тестирования подставьте сюда URL вашей debug-функции (verify-token-debug) или prod verify
-      const VERIFY_URL = 'https://jkogvwoghymvypwzzcco.functions.supabase.co/verify-token'; // <- ОБНОВИТЕ при необходимости
-      const DEEPLINK_SCHEME = 'mindtiles://antonioilev.com/auth'; // <-- замените на вашу схему
+    // Устанавливаем локализованные тексты
+    document.getElementById('congratulations-header').textContent = congratulationsHeader;
+    document.getElementById('congratulations-message').textContent = congratulationsMessage;
+    document.getElementById('openGameButton').textContent = playButtonText;
 
-      const statusEl = document.getElementById('status');
-      const actionsEl = document.getElementById('actions');
-      const tokenBox = document.getElementById('tokenBox');
-      const rawTokenEl = document.getElementById('rawToken');
-      const copyBtn = document.getElementById('copyBtn');
-      const resendBox = document.getElementById('resendBox');
-      const resendBtn = document.getElementById('resendBtn');
-
-      function getToken() {
-        const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
-        const queryParams = new URLSearchParams((window.location.search || '').replace(/^\?/, ''));
-        return hashParams.get('access_token') || queryParams.get('access_token') ||
-               hashParams.get('id_token') || queryParams.get('id_token') ||
-               hashParams.get('token') || queryParams.get('token') || null;
-      }
-
-      function showError(msg) { statusEl.innerHTML = '<span class="err">Ошибка: ' + msg + '</span>'; }
-      function showOK(msg) { statusEl.innerHTML = '<span class="ok">' + msg + '</span>'; }
-
-      let token = getToken();
-      console.log("Location:", location.href);
-      console.log("Hash:", location.hash);
-      console.log("Search:", location.search);
-
-      if (!token) {
-        showError('Токен не найден в URL. Убедитесь, что вы попали на эту страницу после авторизации.');
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
-        return;
-      }
-
-      rawTokenEl.textContent = token;
-      tokenBox.style.display = 'block';
-
-      // Helper to pretty-print JSON safely
-      function pretty(obj) {
-        try { return JSON.stringify(obj, null, 2); } catch(e) { return String(obj); }
-      }
-
-      try {
-        showOK('Проверяем токен (1) — отправляем Authorization header...');
-        // 1) Попытка с Authorization header
-        const respHeader = await fetch(VERIFY_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ debug: 'from client with auth header' })
-        }).catch(err => ({ _networkError: String(err) }));
-
-        const respHeaderBody = respHeader && respHeader.json ? await respHeader.json().catch(() => null) : respHeader;
-        console.log('respHeader status', respHeader.status, respHeaderBody);
-
-        // 2) Дополнительная попытка: отправляем токен в теле (на случай блокировки заголовков)
-        showOK('Проверяем токен (2) — отправляем token в body...');
-        const respBody = await fetch(VERIFY_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, debug: 'from client in body only' })
-        }).catch(err => ({ _networkError: String(err) }));
-        const respBodyJson = respBody && respBody.json ? await respBody.json().catch(() => null) : respBody;
-        console.log('respBody status', respBody.status, respBodyJson);
-
-        // Показываем оба ответа в UI и кодируем возможные причины
-        const combined = {
-          headerAttempt: { status: respHeader && respHeader.status, body: respHeaderBody },
-          bodyAttempt: { status: respBody && respBody.status, body: respBodyJson }
-        };
-
-        // Если хотя бы один ответ показывает diagnostics.payload с sub — отметим успех
-        const headerHasSub = respHeaderBody && respHeaderBody.diagnostics && respHeaderBody.diagnostics.payload && respHeaderBody.diagnostics.has_sub;
-        const bodyHasSub = respBodyJson && respBodyJson.diagnostics && respBodyJson.diagnostics.payload && respBodyJson.diagnostics.has_sub;
-
-        if (headerHasSub || bodyHasSub) {
-          showOK('Токен выглядит корректным на сервере (payload содержит sub). Открываем приложение...');
-          actionsEl.innerHTML = `
-            <div>Ответ сервера (см. детали ниже):</div>
-            <pre style="white-space:pre-wrap">${pretty(combined)}</pre>
-            <button id="openDl">Открыть приложение</button>
-            <button id="showToken">Показать токен</button>
-          `;
-          document.getElementById('openDl').onclick = () => {
-            location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-            history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
-          };
-          document.getElementById('showToken').onclick = () => { tokenBox.style.display = 'block'; };
-
-          // Обновление кнопки
-          const btn = document.querySelector('button');
-          btn.textContent = 'Logged in';  // Меняем текст на "Logged in"
-
-          return;
-        }
-
-        // Если ни один ответ не содержит sub — показываем детальную ошибку и подсказки
-        showError('Верификация не прошла. См. ответы сервера ниже.');
-        actionsEl.innerHTML = `
-          <div>Детали запросов:</div>
-          <pre style="white-space:pre-wrap">${pretty(combined)}</pre>
-          <div style="margin-top:8px;">
-            <button id="openDl">Открыть deeplink вручную</button>
-            <button id="retry">Повторить ещё раз</button>
-          </div>
-        `;
-        document.getElementById('openDl').onclick = () => {
-          location.href = DEEPLINK_SCHEME + '#access_token=' + encodeURIComponent(token);
-          history.replaceState(null, '', window.location.pathname + '#access_token=' + encodeURIComponent(token));
-        };
-        document.getElementById('retry').onclick = () => location.reload();
-
-        // Покажем подсказки в консоли
-        console.warn('Verification failed. Check whether Authorization header is stripped by CORS or intermediary. If header missing, use body token or adjust server CORS to allow Authorization header.');
-
-      } catch (e) {
-        showError('Ошибка при вызове verify-token: ' + e.message);
-        actionsEl.innerHTML = '<button onclick="location.reload()">Попробовать снова</button>';
-        console.error(e);
-      }
-
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(rawTokenEl.textContent);
-          copyBtn.textContent = 'Скопировано';
-          setTimeout(() => copyBtn.textContent = 'Скопировать в буфер', 1500);
-        } catch (err) {
-          copyBtn.textContent = 'Копирование не поддерживается';
-        }
-      });
-
-    })();
+    // Функция для открытия игры через диплинк
+    function openGame() {
+      const DEEPLINK_SCHEME = 'mindtiles://antonioilev.com/auth'; // Замените на вашу схему
+      const token = new URLSearchParams(window.location.hash).get('access_token');
+      const url = `${DEEPLINK_SCHEME}#access_token=${encodeURIComponent(token)}`;
+      window.location.href = url; // Открываем приложение через диплинк
+    }
   </script>
 </body>
 </html>
